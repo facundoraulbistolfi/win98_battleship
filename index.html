@@ -20,10 +20,684 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script type="text/babel" data-type="module" src="App.jsx"></script>
   <script type="text/babel">
+const { useState, useEffect, useRef, useReducer } = React;
+
+// ===== WIN98 SOUND ENGINE =====
+const SFX = (() => {
+  let ctx = null;
+  let muted = false;
+  let unlocked = false;
+  const getCtx = () => { if (!ctx || ctx.state === "closed") ctx = new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state === "suspended") ctx.resume(); return ctx; };
+  const unlock = () => {
+    if (unlocked) return;
+    try {
+      const c = getCtx();
+      const buf = c.createBuffer(1, 1, c.sampleRate);
+      const src = c.createBufferSource();
+      src.buffer = buf; src.connect(c.destination); src.start(0);
+      unlocked = true;
+    } catch(e) {}
+  };
+  if (typeof window !== "undefined") {
+    const doUnlock = () => { unlock(); window.removeEventListener("touchstart", doUnlock); window.removeEventListener("click", doUnlock); };
+    window.addEventListener("touchstart", doUnlock, { once: true });
+    window.addEventListener("click", doUnlock, { once: true });
+  }
+  const noise = (duration, volume = 0.15) => {
+    const c = getCtx(), len = c.sampleRate * duration;
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * volume;
+    return buf;
+  };
+  const play = (fn) => { if (muted) return; try { fn(getCtx()); } catch(e) {} };
+  return {
+    click: () => play(c => {
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = "square"; o.frequency.setValueAtTime(800, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(600, c.currentTime + 0.05);
+      g.gain.setValueAtTime(0.12, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.06);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.06);
+    }),
+    hit: () => play(c => {
+      const nSrc = c.createBufferSource(); nSrc.buffer = noise(0.25, 0.4);
+      const nGain = c.createGain(); nGain.gain.setValueAtTime(0.5, c.currentTime);
+      nGain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.25);
+      const filt = c.createBiquadFilter(); filt.type = "lowpass";
+      filt.frequency.setValueAtTime(3000, c.currentTime);
+      filt.frequency.exponentialRampToValueAtTime(200, c.currentTime + 0.2);
+      nSrc.connect(filt); filt.connect(nGain); nGain.connect(c.destination);
+      nSrc.start(c.currentTime);
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = "sine"; o.frequency.setValueAtTime(120, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(40, c.currentTime + 0.15);
+      g.gain.setValueAtTime(0.35, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.2);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.2);
+    }),
+    miss: () => play(c => {
+      const nSrc = c.createBufferSource(); nSrc.buffer = noise(0.2, 0.2);
+      const nGain = c.createGain(); nGain.gain.setValueAtTime(0.2, c.currentTime);
+      nGain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.2);
+      const filt = c.createBiquadFilter(); filt.type = "bandpass";
+      filt.frequency.setValueAtTime(2000, c.currentTime);
+      filt.frequency.exponentialRampToValueAtTime(400, c.currentTime + 0.15);
+      filt.Q.value = 2;
+      nSrc.connect(filt); filt.connect(nGain); nGain.connect(c.destination);
+      nSrc.start(c.currentTime);
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = "sine"; o.frequency.setValueAtTime(500, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(200, c.currentTime + 0.12);
+      g.gain.setValueAtTime(0.1, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.15);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.15);
+    }),
+    sunk: () => play(c => {
+      [0, 0.12, 0.24].forEach((t, i) => {
+        const freq = [523, 659, 784][i];
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "square"; o.frequency.value = freq;
+        g.gain.setValueAtTime(0.15, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + t + 0.15);
+        o.connect(g); g.connect(c.destination);
+        o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.15);
+      });
+    }),
+    bigBoom: () => play(c => {
+      const nSrc = c.createBufferSource(); nSrc.buffer = noise(0.4, 0.5);
+      const nGain = c.createGain(); nGain.gain.setValueAtTime(0.55, c.currentTime);
+      nGain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.4);
+      const filt = c.createBiquadFilter(); filt.type = "lowpass";
+      filt.frequency.setValueAtTime(4000, c.currentTime);
+      filt.frequency.exponentialRampToValueAtTime(100, c.currentTime + 0.35);
+      nSrc.connect(filt); filt.connect(nGain); nGain.connect(c.destination);
+      nSrc.start(c.currentTime);
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = "sawtooth"; o.frequency.setValueAtTime(80, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(20, c.currentTime + 0.3);
+      g.gain.setValueAtTime(0.3, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.35);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.35);
+    }),
+    radar: () => play(c => {
+      [0, 0.1].forEach((t, i) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "sine"; o.frequency.setValueAtTime(i === 0 ? 1200 : 1600, c.currentTime + t);
+        g.gain.setValueAtTime(0.12, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + t + 0.15);
+        o.connect(g); g.connect(c.destination);
+        o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.15);
+      });
+    }),
+    win: () => play(c => {
+      [0, 0.12, 0.24, 0.36, 0.55].forEach((t, i) => {
+        const freq = [523, 659, 784, 1047, 1047][i];
+        const dur = i === 4 ? 0.4 : 0.14;
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "square";
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(i === 4 ? 0.18 : 0.13, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + t + dur);
+        o.connect(g); g.connect(c.destination);
+        o.start(c.currentTime + t); o.stop(c.currentTime + t + dur);
+      });
+    }),
+    lose: () => play(c => {
+      [0, 0.25, 0.5, 0.75].forEach((t, i) => {
+        const freq = [400, 350, 300, 220][i];
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "sawtooth"; o.frequency.value = freq;
+        g.gain.setValueAtTime(0.12, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + t + 0.28);
+        o.connect(g); g.connect(c.destination);
+        o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.28);
+      });
+    }),
+    error: () => play(c => {
+      [0, 0.08].forEach(t => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "square"; o.frequency.value = 300;
+        g.gain.setValueAtTime(0.1, c.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + t + 0.06);
+        o.connect(g); g.connect(c.destination);
+        o.start(c.currentTime + t); o.stop(c.currentTime + t + 0.06);
+      });
+    }),
+    toggle: () => { muted = !muted; return muted; },
+    isMuted: () => muted,
+  };
+})();
+
+// ===== CONSTANTS =====
+const G = 12;
+const SHIPS = [
+  { name: "Portaaviones", size: 5, reward: "bomb" },
+  { name: "Acorazado", size: 4, reward: "cross" },
+  { name: "Crucero", size: 3, reward: "radar" },
+  { name: "Submarino", size: 3, reward: "radar" },
+  { name: "Destructor", size: 2, reward: "radar" },
+];
+const INIT_PUPS = { bomb: 0, radar: 1, cross: 0 };
+const FONT = '"MS Sans Serif","Microsoft Sans Serif",Tahoma,sans-serif';
+const FACE = { normal: "\u{1F642}", pressed: "\u{1F62E}", win: "\u{1F60E}", lose: "\u{1F635}", think: "\u{1F914}", hit: "\u{1F608}", hurt: "\u{1F62C}" };
+
+// ===== HOOKS =====
+const useWinSize = () => {
+  const [s, setS] = useState({ w: window.innerWidth, h: window.innerHeight });
+  useEffect(() => { const f = () => setS({ w: window.innerWidth, h: window.innerHeight }); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+  return s;
+};
+
+// ===== GRID HELPERS =====
+const mkGrid = () => Array.from({ length: G }, () => Array.from({ length: G }, () => ({ ship: null, hit: false, miss: false })));
+const mkFlags = () => Array.from({ length: G }, () => Array.from({ length: G }, () => false));
+const cloneG = g => g.map(r => r.map(c => ({ ...c })));
+const cloneFlags = f => f.map(r => [...r]);
+const canPlace = (g, r, c, sz, h) => { for (let i = 0; i < sz; i++) { const rr = h ? r : r + i, cc = h ? c + i : c; if (rr >= G || cc >= G || g[rr][cc].ship !== null) return false; } return true; };
+const doPlace = (g, r, c, sz, h, si) => { const n = cloneG(g); for (let i = 0; i < sz; i++) { const rr = h ? r : r + i, cc = h ? c + i : c; n[rr][cc].ship = si; } return n; };
+const randomPlace = () => { let g = mkGrid(); for (let si = 0; si < SHIPS.length; si++) { let ok = false, att = 0; while (!ok && att < 3000) { const h = Math.random() > .5, r = Math.floor(Math.random() * G), c = Math.floor(Math.random() * G); if (canPlace(g, r, c, SHIPS[si].size, h)) { g = doPlace(g, r, c, SHIPS[si].size, h, si); ok = true; } att++; } } return g; };
+const shipSunk = (g, si) => { for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) if (g[r][c].ship === si && !g[r][c].hit) return false; return true; };
+const countSunk = g => { let n = 0; for (let i = 0; i < SHIPS.length; i++) if (shipSunk(g, i)) n++; return n; };
+const allSunk = g => countSunk(g) === SHIPS.length;
+
+const doRadar = (flags, grid, r, c) => {
+  const f = cloneFlags(flags); let found = 0;
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const rr = r + dr, cc = c + dc;
+    if (rr >= 0 && rr < G && cc >= 0 && cc < G && grid[rr][cc].ship !== null && !grid[rr][cc].hit) { f[rr][cc] = true; found++; }
+  }
+  return { flags: f, found };
+};
+
+const areaAttack = (grid, r, c, type) => {
+  const g = cloneG(grid); let cells = [];
+  if (type === "bomb") { for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) cells.push([r + dr, c + dc]); }
+  else { cells = [[r, c], [r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1], [r - 2, c], [r + 2, c], [r, c - 2], [r, c + 2]]; }
+  let anyHit = false;
+  cells.forEach(([rr, cc]) => { if (rr >= 0 && rr < G && cc >= 0 && cc < G && !g[rr][cc].hit && !g[rr][cc].miss) { if (g[rr][cc].ship !== null) { g[rr][cc].hit = true; anyHit = true; } else g[rr][cc].miss = true; } });
+  return { grid: g, anyHit };
+};
+
+const getAIMove = (grid, hits) => {
+  if (hits.length > 0) { const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]]; for (const [hr, hc] of hits) for (const [dr, dc] of dirs) { const nr = hr + dr, nc = hc + dc; if (nr >= 0 && nr < G && nc >= 0 && nc < G && !grid[nr][nc].hit && !grid[nr][nc].miss) return [nr, nc]; } }
+  let a = []; for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) if (!grid[r][c].hit && !grid[r][c].miss && (r + c) % 2 === 0) a.push([r, c]);
+  if (!a.length) for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) if (!grid[r][c].hit && !grid[r][c].miss) a.push([r, c]);
+  return a.length ? a[Math.floor(Math.random() * a.length)] : null;
+};
+
+// ===== ICONS =====
+const MineIcon = ({ size = 22 }) => (<svg width={size} height={size} viewBox="0 0 16 16" style={{ display: "block" }}><rect x="7" y="0" width="2" height="3" fill="#000" /><rect x="7" y="13" width="2" height="3" fill="#000" /><rect x="0" y="7" width="3" height="2" fill="#000" /><rect x="13" y="7" width="3" height="2" fill="#000" /><rect x="2" y="2" width="2" height="2" fill="#000" /><rect x="12" y="2" width="2" height="2" fill="#000" /><rect x="2" y="12" width="2" height="2" fill="#000" /><rect x="12" y="12" width="2" height="2" fill="#000" /><rect x="4" y="4" width="8" height="8" rx="1" fill="#000" /><rect x="5" y="5" width="2" height="2" fill="#fff" /></svg>);
+const WaterIcon = ({ size = 20 }) => (<svg width={size} height={size} viewBox="0 0 16 16" style={{ display: "block" }}><rect x="1" y="6" width="2" height="2" fill="#0000ff" /><rect x="3" y="5" width="2" height="2" fill="#0000ff" /><rect x="5" y="6" width="2" height="2" fill="#0000ff" /><rect x="7" y="7" width="2" height="2" fill="#0000ff" /><rect x="9" y="6" width="2" height="2" fill="#0000ff" /><rect x="11" y="5" width="2" height="2" fill="#0000ff" /><rect x="13" y="6" width="2" height="2" fill="#0000ff" /><rect x="0" y="10" width="2" height="2" fill="#4444ff" /><rect x="2" y="9" width="2" height="2" fill="#4444ff" /><rect x="4" y="10" width="2" height="2" fill="#4444ff" /><rect x="6" y="11" width="2" height="2" fill="#4444ff" /><rect x="8" y="10" width="2" height="2" fill="#4444ff" /><rect x="10" y="9" width="2" height="2" fill="#4444ff" /><rect x="12" y="10" width="2" height="2" fill="#4444ff" /></svg>);
+const ShipIcon = ({ size = 18 }) => (<svg width={size} height={size} viewBox="0 0 16 16" style={{ display: "block" }}><rect x="2" y="2" width="12" height="12" fill="#808080" /><rect x="2" y="2" width="12" height="1" fill="#a0a0a0" /><rect x="2" y="2" width="1" height="12" fill="#a0a0a0" /><rect x="2" y="13" width="12" height="1" fill="#404040" /><rect x="13" y="2" width="1" height="12" fill="#404040" /><rect x="5" y="5" width="6" height="6" fill="#606060" /></svg>);
+const FlagIcon = ({ size = 18 }) => (<svg width={size} height={size} viewBox="0 0 16 16" style={{ display: "block" }}><rect x="7" y="3" width="2" height="10" fill="#000" /><polygon points="3,3 7,3 7,8 3,5.5" fill="#ff0000" /><rect x="4" y="13" width="8" height="2" fill="#000" /><rect x="5" y="12" width="6" height="1" fill="#000" /></svg>);
+
+// ===== UI COMPONENTS =====
+const LEDCounter = ({ value }) => { const s = String(Math.max(0, value)).padStart(2, "0"); return (<div style={{ background: "#000", border: "2px inset #808080", padding: "2px 4px", display: "flex", gap: 1 }}>{s.split("").map((d, i) => <span key={i} style={{ fontFamily: '"Courier New",monospace', fontSize: 22, fontWeight: "bold", color: "#f00", textShadow: "0 0 4px #f00", width: 14, textAlign: "center", lineHeight: "26px" }}>{d}</span>)}</div>); };
+const W98Btn = ({ children, onClick, disabled, small, active, style: ex = {} }) => (<button onClick={onClick} disabled={disabled} style={{ background: active ? "#000080" : "#c0c0c0", color: active ? "#fff" : disabled ? "#808080" : "#000", border: active ? "2px solid #808080" : "2px solid", borderColor: active ? "#808080" : "#fff #808080 #808080 #fff", fontSize: small ? 11 : 12, cursor: disabled ? "default" : "pointer", padding: small ? "3px 8px" : "3px 10px", fontFamily: FONT, whiteSpace: "nowrap", ...ex }}>{children}</button>);
+const Win98Dialog = ({ title, icon, children }) => (<div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#c0c0c0", border: "3px solid", borderColor: "#fff #808080 #808080 #fff", boxShadow: "4px 4px 0 rgba(0,0,0,.5)", minWidth: 280, maxWidth: "92vw" }}><div style={{ background: "linear-gradient(90deg,#000080,#1084d0)", padding: "3px 6px", display: "flex", alignItems: "center", gap: 4 }}><span style={{ fontSize: 11 }}>{icon || "\u{1F4A3}"}</span><span style={{ color: "#fff", fontSize: 11, fontWeight: "bold" }}>{title}</span></div><div style={{ padding: "12px 16px" }}>{children}</div></div></div>);
+
+// ===== MAIN COMPONENT =====
+function BattleshipGame() {
+  const { w: winW } = useWinSize();
+  const isMob = winW < 620;
+  const maxGW = isMob ? winW - 28 : Math.min(420, (winW - 60) / 2);
+  const cellSz = Math.max(18, Math.min(30, Math.floor((maxGW - 36) / G)));
+  const iconSz = Math.max(12, cellSz - 6);
+  const [, forceUpdate] = useReducer(x => x + 1, 0);
+  const R = useRef({
+    mode: null, phase: "menu",
+    grids: [mkGrid(), mkGrid()],
+    flags: [mkFlags(), mkFlags()],
+    pups: [{ ...INIT_PUPS }, { ...INIT_PUPS }],
+    activePU: null, curPlayer: 0, placingP: 0, curShip: 0, horiz: true,
+    face: FACE.normal, winner: null, aiHits: [],
+    rewarded: [new Set(), new Set()],
+    timer: 0, timerOn: false,
+    menuOpen: null, activeTab: "player", showConfirm: false,
+    passMsg: "", passNext: null, radarResult: null,
+    hoverCells: [], hoverValid: false, locked: false, muted: false,
+  });
+  const s = R.current;
+  const set = (updates) => { Object.assign(s, updates); forceUpdate(); };
+  const isMobRef = useRef(isMob); isMobRef.current = isMob;
+
+  // Timer
+  const timerRef = useRef(null);
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    if (s.timerOn) timerRef.current = setInterval(() => { s.timer = Math.min(s.timer + 1, 999); forceUpdate(); }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [s.timerOn]);
+
+  // Keyboard
+  useEffect(() => { const f = e => { if (e.key === "r" || e.key === "R") { s.horiz = !s.horiz; forceUpdate(); } }; window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f); }, []);
+
+  // Radar toast
+  useEffect(() => { if (s.radarResult) { const t = setTimeout(() => set({ radarResult: null }), 2000); return () => clearTimeout(t); } }, [s.radarResult]);
+
+  // ===== ACTIONS =====
+  const startGame = (m) => {
+    clearInterval(timerRef.current);
+    Object.assign(s, {
+      mode: m, phase: "placing",
+      grids: [mkGrid(), m === "ai" ? randomPlace() : mkGrid()],
+      flags: [mkFlags(), mkFlags()],
+      pups: [{ ...INIT_PUPS }, { ...INIT_PUPS }],
+      activePU: null, curPlayer: 0, placingP: 0, curShip: 0, horiz: true,
+      face: FACE.normal, winner: null, aiHits: [],
+      rewarded: [new Set(), new Set()],
+      timer: 0, timerOn: false, menuOpen: null, activeTab: "player",
+      showConfirm: false, radarResult: null, hoverCells: [], locked: false,
+    });
+    forceUpdate();
+  };
+
+  const resetToMenu = () => { clearInterval(timerRef.current); set({ phase: "menu", mode: null, showConfirm: false, timerOn: false }); };
+
+  const finishPlacing = () => {
+    if (s.mode === "ai") {
+      set({ phase: "playing", timerOn: true, curPlayer: 0, activeTab: isMob ? "enemy" : "player" });
+    } else {
+      if (s.placingP === 0) {
+        set({ phase: "passing", passMsg: "Pasale el dispositivo al Jugador 2", passNext: "place2" });
+      } else {
+        set({ phase: "passing", passMsg: "Pasale el dispositivo al Jugador 1 para empezar", passNext: "startPlay" });
+      }
+    }
+  };
+
+  const handlePassConfirm = () => {
+    if (s.passNext === "place2") { set({ placingP: 1, curShip: 0, horiz: true, phase: "placing" }); }
+    else if (s.passNext === "startPlay") { set({ curPlayer: 0, phase: "playing", timerOn: true, activeTab: isMobRef.current ? "j1" : "player" }); }
+  };
+
+  const autoPlaceShips = () => { s.grids[s.placingP] = randomPlace(); s.curShip = SHIPS.length; SFX.click(); forceUpdate(); finishPlacing(); };
+
+  const handlePlaceClick = (r, c) => {
+    if (s.phase !== "placing" || s.curShip >= SHIPS.length) return;
+    const sz = SHIPS[s.curShip].size;
+    if (!canPlace(s.grids[s.placingP], r, c, sz, s.horiz)) { SFX.error(); return; }
+    SFX.click();
+    s.grids[s.placingP] = doPlace(s.grids[s.placingP], r, c, sz, s.horiz, s.curShip);
+    s.hoverCells = [];
+    s.curShip++;
+    forceUpdate();
+    if (s.curShip >= SHIPS.length) finishPlacing();
+  };
+
+  const handlePlaceHover = (r, c) => {
+    if (s.phase !== "placing" || s.curShip >= SHIPS.length || isMob) return;
+    const sz = SHIPS[s.curShip].size, cells = [];
+    for (let i = 0; i < sz; i++) { const rr = s.horiz ? r : r + i, cc = s.horiz ? c + i : c; if (rr < G && cc < G) cells.push([rr, cc]); }
+    set({ hoverCells: cells, hoverValid: canPlace(s.grids[s.placingP], r, c, sz, s.horiz) });
+  };
+
+  const checkRewards = (attacker, targetGrid) => {
+    let anySunk = false;
+    for (let si = 0; si < SHIPS.length; si++) {
+      if (shipSunk(targetGrid, si) && !s.rewarded[attacker].has(si)) {
+        s.rewarded[attacker].add(si);
+        s.pups[attacker][SHIPS[si].reward]++;
+        anySunk = true;
+      }
+    }
+    if (anySunk) setTimeout(() => SFX.sunk(), 100);
+  };
+
+  const clearHitFlags = (playerIdx, grid) => {
+    const f = s.flags[playerIdx];
+    for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) if (grid[r][c].hit) f[r][c] = false;
+  };
+
+  const endTurn = () => {
+    s.activePU = null;
+    if (s.mode === "ai") {
+      s.locked = true; forceUpdate();
+      setTimeout(() => doAITurn(), 600);
+    } else {
+      const next = 1 - s.curPlayer;
+      set({ curPlayer: next, activePU: null, face: FACE.normal, locked: false, radarResult: null, activeTab: isMobRef.current ? (next === 0 ? "j1" : "j2") : s.activeTab });
+    }
+  };
+
+  const endGame = (w) => {
+    clearInterval(timerRef.current);
+    const isWinner = s.mode === "ai" ? w === 0 : true;
+    setTimeout(() => isWinner ? SFX.win() : SFX.lose(), 300);
+    set({ winner: w, face: FACE.win, phase: "gameover", timerOn: false, locked: false });
+  };
+
+  // ===== PLAYER SHOOT =====
+  const playerShoot = (r, c) => {
+    if (s.phase !== "playing" || s.winner || s.locked) return;
+    if (s.mode === "ai" && s.curPlayer !== 0) return;
+    const ei = 1 - s.curPlayer;
+    const eg = s.grids[ei];
+    if (eg[r][c].hit || eg[r][c].miss) { SFX.error(); return; }
+    // RADAR
+    if (s.activePU === "radar") {
+      SFX.radar();
+      const result = doRadar(s.flags[s.curPlayer], eg, r, c);
+      s.flags[s.curPlayer] = result.flags;
+      s.pups[s.curPlayer].radar--;
+      s.activePU = null;
+      set({ radarResult: result.found > 0 ? `\u{1F6A9} Radar: ${result.found} barco${result.found > 1 ? "s" : ""} detectado${result.found > 1 ? "s" : ""}!` : "\u{1F4E1} Radar: zona limpia" });
+      return;
+    }
+    // BOMB / CROSS
+    if (s.activePU === "bomb" || s.activePU === "cross") {
+      SFX.bigBoom();
+      const res = areaAttack(eg, r, c, s.activePU);
+      s.grids[ei] = res.grid;
+      s.pups[s.curPlayer][s.activePU]--;
+      s.activePU = null;
+      checkRewards(s.curPlayer, res.grid);
+      clearHitFlags(s.curPlayer, res.grid);
+      if (allSunk(res.grid)) { endGame(s.curPlayer); return; }
+      if (res.anyHit) { set({ face: FACE.hit }); return; }
+      forceUpdate(); endTurn(); return;
+    }
+    // NORMAL SHOT
+    const g = cloneG(eg);
+    const cell = g[r][c];
+    const wasHit = cell.ship !== null;
+    if (wasHit) { cell.hit = true; s.face = FACE.hit; SFX.hit(); } else { cell.miss = true; s.face = FACE.normal; SFX.miss(); }
+    s.grids[ei] = g;
+    checkRewards(s.curPlayer, g);
+    clearHitFlags(s.curPlayer, g);
+    if (allSunk(g)) { endGame(s.curPlayer); return; }
+    if (wasHit) { forceUpdate(); return; }
+    forceUpdate(); endTurn();
+  };
+
+  // ===== AI TURN =====
+  const doAITurn = () => {
+    s.face = FACE.think;
+    if (isMobRef.current) s.activeTab = "player";
+    forceUpdate();
+    setTimeout(() => {
+      const target = s.grids[0];
+      const aiP = s.pups[1];
+      let usedPU = null;
+      if (aiP.bomb > 0 && s.aiHits.length >= 2 && Math.random() < .6) usedPU = "bomb";
+      else if (aiP.cross > 0 && s.aiHits.length >= 1 && Math.random() < .4) usedPU = "cross";
+      if (usedPU) {
+        const center = s.aiHits.length > 0 ? s.aiHits[0] : getAIMove(target, s.aiHits);
+        if (!center) { s.locked = false; forceUpdate(); return; }
+        SFX.bigBoom();
+        const res = areaAttack(target, center[0], center[1], usedPU);
+        s.grids[0] = res.grid; aiP[usedPU]--;
+        checkRewards(1, res.grid);
+        for (let si = 0; si < SHIPS.length; si++) if (shipSunk(res.grid, si)) s.aiHits = s.aiHits.filter(([hr, hc]) => res.grid[hr][hc].ship !== si);
+        for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) {
+          if (res.grid[r][c].hit && !target[r][c].hit && res.grid[r][c].ship !== null && !s.aiHits.some(([hr, hc]) => hr === r && hc === c)) s.aiHits.push([r, c]);
+        }
+        s.face = res.anyHit ? FACE.hurt : FACE.normal;
+        forceUpdate();
+        if (allSunk(res.grid)) { setTimeout(() => SFX.lose(), 300); set({ winner: 1, face: FACE.lose, phase: "gameover", timerOn: false, locked: false }); return; }
+        if (res.anyHit) { setTimeout(() => doAITurn(), 700); return; }
+        s.curPlayer = 0; s.locked = false; s.face = FACE.normal;
+        if (isMobRef.current) setTimeout(() => set({ activeTab: "enemy" }), 800); else forceUpdate();
+        return;
+      }
+      if (aiP.radar > 0 && s.aiHits.length === 0 && Math.random() < .4) {
+        aiP.radar--;
+        setTimeout(() => doAITurn(), 300); return;
+      }
+      const move = getAIMove(target, s.aiHits);
+      if (!move) { s.locked = false; forceUpdate(); return; }
+      const [mr, mc] = move;
+      const g = cloneG(target); const cell = g[mr][mc];
+      if (cell.ship !== null) {
+        cell.hit = true; s.aiHits.push([mr, mc]);
+        if (shipSunk(g, cell.ship)) s.aiHits = s.aiHits.filter(([hr, hc]) => g[hr][hc].ship !== cell.ship);
+        s.face = FACE.hurt; SFX.hit();
+      } else { cell.miss = true; s.face = FACE.normal; SFX.miss(); }
+      s.grids[0] = g;
+      checkRewards(1, g);
+      forceUpdate();
+      if (allSunk(g)) { setTimeout(() => SFX.lose(), 300); set({ winner: 1, face: FACE.lose, phase: "gameover", timerOn: false, locked: false }); return; }
+      if (cell.ship !== null) { setTimeout(() => doAITurn(), 700); return; }
+      s.curPlayer = 0; s.locked = false;
+      if (isMobRef.current) setTimeout(() => set({ activeTab: "enemy" }), 800); else forceUpdate();
+    }, 500);
+  };
+
+  // ===== COMPUTED =====
+  const myGrid = s.grids[s.curPlayer], enemyGrid = s.grids[1 - s.curPlayer];
+  const myFlags = s.flags[s.curPlayer], myPups = s.pups[s.curPlayer];
+  const myShipsLeft = SHIPS.length - countSunk(myGrid), enemyShipsLeft = SHIPS.length - countSunk(enemyGrid);
+  const isMyTurn = s.mode === "ai" ? s.curPlayer === 0 && !s.locked : true;
+
+  // ===== CELL RENDERING =====
+  const getCellStyle = (cell, isEnemy, r, c) => {
+    const isHov = s.hoverCells.some(([rr, cc]) => rr === r && cc === c);
+    let bg = "#c0c0c0";
+    const raised = { borderTop: "2px solid #fff", borderLeft: "2px solid #fff", borderBottom: "2px solid #808080", borderRight: "2px solid #808080" };
+    const flat = { border: "1px solid #808080" }; let bs = raised;
+    if (cell.hit && cell.ship !== null) { bg = "#ff0000"; bs = flat; }
+    else if (cell.miss) { bg = "#d4e6f1"; bs = flat; }
+    else if (!isEnemy && cell.ship !== null) bg = "#808080";
+    if (isHov && s.phase === "placing") bg = s.hoverValid ? "#6a96d4" : "#d46a6a";
+    if (isEnemy && s.activePU && isHov) bg = s.activePU === "radar" ? "#90ee90" : "#ffa500";
+    return { width: cellSz, height: cellSz, ...bs, background: bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: (s.phase === "placing" && !isEnemy) || (s.phase === "playing" && isEnemy && isMyTurn) ? "pointer" : "default", userSelect: "none", WebkitTapHighlightColor: "transparent" };
+  };
+
+  const getCellContent = (cell, isEnemy, r, c, flagsParam) => {
+    if (cell.hit && cell.ship !== null) return <MineIcon size={iconSz} />;
+    if (cell.miss) return <WaterIcon size={iconSz} />;
+    const fl = flagsParam || myFlags;
+    if (isEnemy && fl && fl[r]?.[c] && !cell.hit) return <FlagIcon size={iconSz} />;
+    if (!isEnemy && cell.ship !== null) return <ShipIcon size={iconSz - 2} />;
+    return null;
+  };
+
+  const renderGrid = (grid, isEnemy, label, { flagsParam, disabled } = {}) => {
+    const hcw = cellSz + (isMob ? 2 : 4), rlw = Math.max(16, cellSz - 6);
+    return (<div style={{ display: "flex", flexDirection: "column", alignItems: "center", opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? "none" : "auto", filter: disabled ? "grayscale(60%)" : "none", transition: "opacity 0.2s" }}>
+      <div style={{ fontFamily: FONT, fontSize: isMob ? 10 : 12, fontWeight: "bold", marginBottom: 3, color: "#000" }}>{label}</div>
+      <div style={{ border: "3px solid", borderColor: "#808080 #fff #fff #808080", background: "#c0c0c0" }}>
+        <div style={{ display: "flex", paddingLeft: rlw }}>{Array.from({ length: G }, (_, i) => <div key={i} style={{ width: hcw, textAlign: "center", fontSize: isMob ? 7 : 9, fontFamily: FONT, fontWeight: "bold", color: "#000", lineHeight: "13px" }}>{String.fromCharCode(65 + i)}</div>)}</div>
+        {grid.map((row, ri) => <div key={ri} style={{ display: "flex", alignItems: "center" }}>
+          <div style={{ width: rlw, textAlign: "center", fontSize: isMob ? 7 : 9, fontFamily: FONT, fontWeight: "bold", color: "#000" }}>{ri + 1}</div>
+          {row.map((cell, ci) => (
+            <div key={ci} style={getCellStyle(cell, isEnemy, ri, ci)}
+              onClick={() => { if (!isEnemy && s.phase === "placing") handlePlaceClick(ri, ci); if (isEnemy && s.phase === "playing" && !disabled) playerShoot(ri, ci); }}
+              onMouseEnter={() => { if (!isEnemy && s.phase === "placing") handlePlaceHover(ri, ci); if (isEnemy && s.activePU && !isMob && !disabled) set({ hoverCells: [[ri, ci]] }); }}
+              onMouseLeave={() => { if (s.phase === "placing" || s.activePU) set({ hoverCells: [] }); }}
+            >{getCellContent(cell, isEnemy, ri, ci, flagsParam)}</div>
+          ))}
+        </div>)}
+      </div>
+    </div>);
+  };
+
+  const PUBar = () => {
+    if (s.phase !== "playing" || !isMyTurn) return null;
+    const items = [{ key: "radar", label: "\u{1F6A9} Radar", count: myPups.radar }, { key: "cross", label: "\u271B Cruz", count: myPups.cross }, { key: "bomb", label: "\u{1F4A3} Bomba", count: myPups.bomb }];
+    if (!items.some(i => i.count > 0)) return null;
+    return (<div style={{ display: "flex", gap: 4, justifyContent: "center", marginBottom: 6, flexWrap: "wrap", padding: "4px 6px", border: "1px solid #808080", background: "#d4d0c8" }}>
+      <span style={{ fontSize: 10, fontWeight: "bold", alignSelf: "center", marginRight: 2 }}>POWER-UPS:</span>
+      {items.map(it => it.count > 0 && <W98Btn key={it.key} small active={s.activePU === it.key} onClick={() => { SFX.click(); set({ activePU: s.activePU === it.key ? null : it.key }); }}>{it.label} x{it.count}</W98Btn>)}
+      {s.activePU && <span style={{ fontSize: 10, alignSelf: "center", color: "#000080", fontStyle: "italic" }}>{s.activePU === "radar" ? "Escane\u00e1 3x3 (no gasta turno)" : "Eleg\u00ed d\u00f3nde atacar"}</span>}
+    </div>);
+  };
+
+  const statusMsg = () => {
+    if (s.phase === "placing") return (s.mode === "local" ? `J${s.placingP + 1}: ` : "") + "Ubic\u00e1 tus barcos";
+    if (s.phase !== "playing") return "";
+    if (s.mode === "ai") return s.face === FACE.hit ? "\u{1F4A5} \u00a1Impacto! Tir\u00e1s de nuevo" : s.face === FACE.hurt ? "\u{1F4A5} \u00a1Te pegaron! Tiran de nuevo..." : s.locked ? "\u23F3 Turno enemigo..." : s.activePU ? `Usando ${s.activePU.toUpperCase()}` : "\u25B6 Tu turno";
+    return s.face === FACE.hit ? `\u{1F4A5} J${s.curPlayer + 1} tira de nuevo` : s.activePU ? `J${s.curPlayer + 1}: ${s.activePU.toUpperCase()}` : `\u25B6 Turno J${s.curPlayer + 1}`;
+  };
+
+  const isWin = s.winner === s.curPlayer || (s.mode === "ai" && s.winner === 0);
+
+  // ===== MENU SCREEN =====
+  if (s.phase === "menu") return (
+    <div style={{ minHeight: "100vh", background: "#008080", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, padding: 16 }}>
+      <div style={{ background: "#c0c0c0", border: "3px solid", borderColor: "#fff #808080 #808080 #fff", boxShadow: "2px 2px 0 #000", width: isMob ? "100%" : 380 }}>
+        <div style={{ background: "linear-gradient(90deg,#000080,#1084d0)", padding: "3px 6px", display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 12 }}>{"\u{1F4A3}"}</span><span style={{ color: "#fff", fontSize: 12, fontWeight: "bold" }}>Batalla Naval</span>
+        </div>
+        <div style={{ padding: 20, textAlign: "center" }}>
+          <div style={{ fontSize: 28, marginBottom: 4 }}>{"\u{1F6A2}"}</div>
+          <div style={{ fontSize: 16, fontWeight: "bold", marginBottom: 2 }}>BATALLA NAVAL</div>
+          <div style={{ fontSize: 10, color: "#666", marginBottom: 16 }}>Edici&oacute;n Windows 98 &mdash; Mapa 12&times;12</div>
+          <div style={{ border: "3px solid", borderColor: "#808080 #fff #fff #808080", padding: 12, marginBottom: 12, textAlign: "left", fontSize: 10, lineHeight: 1.7 }}>
+            {"\u{1F4A3}"} <b>Power-Ups</b> &mdash; Hund&iacute; barcos para ganar Bomba 3&times;3, Cruz y m&aacute;s Radar<br />
+            {"\u{1F6A9}"} <b>Radar</b> &mdash; Escane&aacute; 3&times;3 y marca barcos con banderas. No gasta turno. Empez&aacute;s con 1<br />
+            {"\u{1F4A5}"} <b>Turno extra</b> &mdash; Si peg&aacute;s, tir&aacute;s de nuevo
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
+            <W98Btn onClick={() => { SFX.click(); startGame("ai"); }} style={{ width: 220, padding: "6px 10px" }}>{"\u{1F5A5}\uFE0F"} vs Computadora</W98Btn>
+            <W98Btn onClick={() => { SFX.click(); startGame("local"); }} style={{ width: 220, padding: "6px 10px" }}>{"\u{1F465}"} 2 Jugadores (local)</W98Btn>
+          </div>
+          <div style={{ fontSize: 9, color: "#888", marginTop: 8, textAlign: "center" }}>En 2 jugadores ven ambos tableros. El activo se ilumina, el otro se grisea.</div>
+        </div>
+        <div style={{ borderTop: "2px solid #808080", padding: "2px 6px", fontSize: 10, color: "#666", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>v2.2</span>
+          <span onClick={() => { s.muted = SFX.toggle(); forceUpdate(); }} style={{ cursor: "pointer", userSelect: "none", fontSize: 13 }}>{s.muted ? "\u{1F507}" : "\u{1F50A}"}</span>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ===== PASS SCREEN =====
+  if (s.phase === "passing") return (
+    <div style={{ minHeight: "100vh", background: "#008080", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, padding: 16 }}>
+      <Win98Dialog title="Batalla Naval" icon={"\u{1F504}"}><div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 36, marginBottom: 8 }}>{"\u{1F648}"}</div>
+        <div style={{ fontSize: 13, fontWeight: "bold", marginBottom: 12 }}>{s.passMsg}</div>
+        <div style={{ fontSize: 11, color: "#666", marginBottom: 16 }}>Asegurate de que no vea tu tablero</div>
+        <W98Btn onClick={handlePassConfirm} style={{ padding: "6px 24px" }}>Listo</W98Btn>
+      </div></Win98Dialog>
+    </div>
+  );
+
+  // ===== GAME SCREEN =====
+  return (
+    <div style={{ minHeight: "100vh", background: "#008080", display: "flex", alignItems: isMob ? "flex-start" : "center", justifyContent: "center", fontFamily: FONT, padding: isMob ? 4 : 16, boxSizing: "border-box" }} onClick={() => s.menuOpen && set({ menuOpen: null })}>
+      <div style={{ background: "#c0c0c0", border: "3px solid", borderColor: "#fff #808080 #808080 #fff", boxShadow: "2px 2px 0 #000", width: isMob ? "100%" : "auto", maxWidth: isMob ? "100%" : "none" }}>
+        {/* Title */}
+        <div style={{ background: "linear-gradient(90deg,#000080,#1084d0)", padding: "3px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ fontSize: 12 }}>{"\u{1F4A3}"}</span><span style={{ color: "#fff", fontSize: 12, fontWeight: "bold" }}>Batalla Naval{s.mode === "local" ? ` \u2014 Jugador ${s.curPlayer + 1}` : ""}</span></div>
+          <div style={{ display: "flex", gap: 2 }}>{["_", "\u25A1", "\u00D7"].map((b, i) => <button key={i} style={{ width: 18, height: 16, background: "#c0c0c0", border: "2px solid", borderColor: "#fff #808080 #808080 #fff", fontSize: 10, fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{b}</button>)}</div>
+        </div>
+        {/* Menu */}
+        <div style={{ display: "flex", padding: "2px 0", borderBottom: "1px solid #808080", position: "relative" }}>
+          {["Juego", "Ayuda"].map(menu => <div key={menu} style={{ position: "relative" }}>
+            <button onClick={e => { e.stopPropagation(); set({ menuOpen: s.menuOpen === menu ? null : menu }); }} style={{ background: s.menuOpen === menu ? "#000080" : "transparent", color: s.menuOpen === menu ? "#fff" : "#000", border: "none", padding: "2px 8px", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>{menu}</button>
+            {s.menuOpen === menu && menu === "Juego" && <div style={{ position: "absolute", top: "100%", left: 0, background: "#c0c0c0", border: "2px solid", borderColor: "#fff #808080 #808080 #fff", zIndex: 100, minWidth: 180, boxShadow: "2px 2px 0 #000" }} onClick={e => e.stopPropagation()}>
+              {[{ label: "Nuevo juego", action: () => set({ showConfirm: true }) }, { divider: true }, { label: "Volver al men\u00fa", action: resetToMenu }].map((item, i) => item.divider ? <div key={i} style={{ borderTop: "1px solid #808080", borderBottom: "1px solid #fff", margin: "2px 3px" }} /> :
+                <button key={i} onClick={() => { item.action(); set({ menuOpen: null }); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 24px", border: "none", background: "transparent", fontSize: 12, fontFamily: FONT, cursor: "pointer" }}
+                  onMouseEnter={e => { e.target.style.background = "#000080"; e.target.style.color = "#fff"; }} onMouseLeave={e => { e.target.style.background = "transparent"; e.target.style.color = "#000"; }}>{item.label}</button>)}
+            </div>}
+            {s.menuOpen === menu && menu === "Ayuda" && <div style={{ position: "absolute", top: "100%", left: 0, background: "#c0c0c0", border: "2px solid", borderColor: "#fff #808080 #808080 #fff", zIndex: 100, minWidth: 240, padding: 8, boxShadow: "2px 2px 0 #000", fontSize: 11 }}>
+              <div style={{ fontWeight: "bold", marginBottom: 4 }}>Batalla Naval v2.2 &mdash; 12&times;12</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}><MineIcon size={12} /> impacto &middot; <WaterIcon size={12} /> agua &middot; <FlagIcon size={12} /> detectado</div>
+              <div style={{ marginTop: 4 }}>Hund&iacute; barcos para ganar power-ups</div>
+              <div>{"\u{1F6A9}"} Radar: escanea 3&times;3, marca con banderas</div>
+              <div>{"\u{1F4A3}"} Bomba: ataque 3&times;3</div>
+              <div>{"\u271B"} Cruz: ataque en + (9 celdas)</div>
+              <div>Si peg&aacute;s, tir&aacute;s de nuevo</div>
+            </div>}
+          </div>)}
+        </div>
+        {/* Control Bar */}
+        <div style={{ padding: isMob ? "4px 6px" : "6px 8px" }}><div style={{ border: "3px solid", borderColor: "#808080 #fff #fff #808080", padding: "5px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#c0c0c0" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ fontSize: 9, marginBottom: 2 }}>{s.mode === "local" ? "J1" : "ENEMIGO"}</span><LEDCounter value={s.mode === "local" ? SHIPS.length - countSunk(s.grids[1]) : enemyShipsLeft} /></div>
+          <button onClick={() => set({ showConfirm: true })} onMouseDown={() => set({ face: FACE.pressed })} onMouseUp={() => set({ face: s.winner !== null ? FACE.win : FACE.normal })} onTouchStart={() => set({ face: FACE.pressed })} onTouchEnd={() => set({ face: s.winner !== null ? FACE.win : FACE.normal })}
+            style={{ width: 36, height: 36, background: "#c0c0c0", border: "3px solid", borderColor: "#fff #808080 #808080 #fff", cursor: "pointer", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{s.face}</button>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ fontSize: 9, marginBottom: 2 }}>{s.mode === "local" ? "J2" : "PROPIOS"}</span><LEDCounter value={s.mode === "local" ? SHIPS.length - countSunk(s.grids[0]) : myShipsLeft} /></div>
+        </div></div>
+        {/* Game Area */}
+        <div style={{ padding: isMob ? "0 6px 6px" : "0 8px 8px" }}><div style={{ border: "3px solid", borderColor: "#808080 #fff #fff #808080", padding: isMob ? 6 : 10, background: "#c0c0c0" }}>
+          {s.phase === "placing" && <div style={{ textAlign: "center", marginBottom: 8, padding: "6px 8px", background: "#ffffcc", border: "1px solid #808080", fontSize: isMob ? 11 : 12 }}>
+            <div>{s.mode === "local" ? `J${s.placingP + 1}: ` : ""}Ubic&aacute; el <b>{SHIPS[s.curShip]?.name}</b> ({SHIPS[s.curShip]?.size} casillas)</div>
+            <div style={{ marginTop: 4, display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+              <W98Btn small onClick={() => set({ horiz: !s.horiz })}>{s.horiz ? "\u2194 Horizontal" : "\u2195 Vertical"}</W98Btn>
+              <W98Btn small onClick={autoPlaceShips}>Al azar</W98Btn>
+            </div>
+          </div>}
+          {s.phase === "gameover" && <div style={{ border: "3px solid", borderColor: "#fff #808080 #808080 #fff", background: "#c0c0c0", marginBottom: 8, boxShadow: "1px 1px 0 #000" }}>
+            <div style={{ background: "linear-gradient(90deg,#000080,#1084d0)", padding: "2px 4px", display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 10 }}>{isWin ? "\u{1F3C6}" : "\u{1F480}"}</span>
+              <span style={{ color: "#fff", fontSize: 11, fontWeight: "bold" }}>{isWin ? "Victoria" : "Derrota"}</span>
+            </div>
+            <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 28, flexShrink: 0 }}>{isWin ? FACE.win : FACE.lose}</span>
+              <div style={{ fontSize: 12 }}><div style={{ fontWeight: "bold", marginBottom: 2 }}>{s.mode === "local" ? `\u00a1Jugador ${s.winner + 1} gana!` : isWin ? "\u00a1Hundiste toda la flota!" : "Tu flota fue destruida."}</div><div style={{ fontSize: 11, color: "#444" }}>Tiempo: {s.timer}s</div></div>
+            </div>
+            <div style={{ padding: "4px 12px 8px", display: "flex", justifyContent: "center", gap: 8 }}><W98Btn onClick={() => startGame(s.mode)}>Revancha</W98Btn><W98Btn onClick={resetToMenu}>Men&uacute;</W98Btn></div>
+          </div>}
+          {(s.phase === "playing" || s.phase === "placing") && <div style={{ textAlign: "center", marginBottom: 6, fontSize: 11, color: s.locked ? "#800000" : "#000080", fontWeight: "bold" }}>
+            {statusMsg()}{s.phase === "playing" && <span style={{ fontWeight: "normal", color: "#666", marginLeft: 8 }}>{"\u23F1"} {s.timer}s</span>}
+          </div>}
+          {s.radarResult && <div style={{ textAlign: "center", marginBottom: 6, padding: "4px 8px", background: s.radarResult.includes("limpia") ? "#e8e8e8" : "#ffffcc", border: "1px solid #808080", fontSize: 11, fontWeight: "bold" }}>{s.radarResult}</div>}
+          <PUBar />
+          {/* Local playing: both attack grids, inactive one grayed */}
+          {s.mode === "local" && (s.phase === "playing" || s.phase === "gameover") ? (
+            isMob ? <div>
+              <div style={{ display: "flex", gap: 0, marginBottom: 6 }}>
+                <W98Btn active={s.activeTab === "j1"} onClick={() => set({ activeTab: "j1" })} style={{ flex: 1, textAlign: "center" }}>J1 ataca</W98Btn>
+                <W98Btn active={s.activeTab === "j2"} onClick={() => set({ activeTab: "j2" })} style={{ flex: 1, textAlign: "center" }}>J2 ataca</W98Btn>
+              </div>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                {s.activeTab === "j1"
+                  ? renderGrid(s.grids[1], true, "J1 ATACA", { flagsParam: s.flags[0], disabled: s.curPlayer !== 0 })
+                  : renderGrid(s.grids[0], true, "J2 ATACA", { flagsParam: s.flags[1], disabled: s.curPlayer !== 1 })}
+              </div>
+            </div> :
+            <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+              {renderGrid(s.grids[1], true, "J1 ATACA", { flagsParam: s.flags[0], disabled: s.curPlayer !== 0 })}
+              {renderGrid(s.grids[0], true, "J2 ATACA", { flagsParam: s.flags[1], disabled: s.curPlayer !== 1 })}
+            </div>
+          ) : isMob && (s.phase === "playing" || s.phase === "gameover") ? <div>
+            <div style={{ display: "flex", gap: 0, marginBottom: 6 }}>
+              <W98Btn active={s.activeTab === "player"} onClick={() => set({ activeTab: "player" })} style={{ flex: 1, textAlign: "center" }}>Tu Flota</W98Btn>
+              <W98Btn active={s.activeTab === "enemy"} onClick={() => set({ activeTab: "enemy" })} style={{ flex: 1, textAlign: "center" }}>Enemiga</W98Btn>
+            </div>
+            <div style={{ display: "flex", justifyContent: "center" }}>{s.activeTab === "player" ? renderGrid(myGrid, false, "TU FLOTA") : renderGrid(enemyGrid, true, "FLOTA ENEMIGA")}</div>
+          </div> : isMob && s.phase === "placing" ? <div style={{ display: "flex", justifyContent: "center" }}>{renderGrid(s.grids[s.placingP], false, s.mode === "local" ? `FLOTA J${s.placingP + 1}` : "TU FLOTA")}</div> :
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+            {s.phase === "placing" ? renderGrid(s.grids[s.placingP], false, s.mode === "local" ? `FLOTA J${s.placingP + 1}` : "TU FLOTA") : renderGrid(myGrid, false, "TU FLOTA")}
+            {(s.phase === "playing" || s.phase === "gameover") && renderGrid(enemyGrid, true, "FLOTA ENEMIGA")}
+          </div>}
+          <div style={{ marginTop: 8, display: "flex", justifyContent: "center", gap: isMob ? 4 : 10, flexWrap: "wrap" }}>
+            {SHIPS.map((ship, i) => { const sunk = s.phase !== "placing" && shipSunk(enemyGrid, i) && enemyGrid.some(r => r.some(c => c.ship === i)); return (
+              <div key={i} style={{ fontSize: isMob ? 8 : 10, display: "flex", alignItems: "center", gap: 2, opacity: sunk ? .5 : 1 }}>
+                <span style={{ fontWeight: s.curShip === i && s.phase === "placing" ? "bold" : "normal" }}>{isMob ? ship.name.slice(0, 3) : ship.name}</span>
+                <span style={{ display: "flex", gap: 1 }}>{Array.from({ length: ship.size }, (_, j) => <span key={j} style={{ display: "inline-block", width: isMob ? 6 : 9, height: isMob ? 6 : 9, background: sunk ? "#f00" : "#808080", border: "1px solid #000" }} />)}</span>
+                {sunk && <span style={{ fontSize: 8 }}>{"\u2192"}{ship.reward === "bomb" ? "\u{1F4A3}" : ship.reward === "cross" ? "\u271B" : "\u{1F6A9}"}</span>}
+              </div>); })}
+          </div>
+        </div></div>
+        <div style={{ borderTop: "2px solid #808080", padding: "2px 6px", fontSize: isMob ? 10 : 11, display: "flex", gap: 4 }}>
+          <div style={{ flex: 1, border: "1px solid", borderColor: "#808080 #fff #fff #808080", padding: "1px 4px" }}>{s.phase === "placing" ? `Barcos: ${s.curShip}/${SHIPS.length}` : s.phase === "gameover" ? (isWin ? "Victoria" : "Derrota") : s.mode === "local" ? `Turno J${s.curPlayer + 1}` : s.locked ? "Turno enemigo" : "Tu turno"}</div>
+          <div style={{ border: "1px solid", borderColor: "#808080 #fff #fff #808080", padding: "1px 4px" }}>{`\u{1F6A9}${myPups.radar} \u271B${myPups.cross} \u{1F4A3}${myPups.bomb}`}</div>
+          <div style={{ width: isMob ? 45 : 65, border: "1px solid", borderColor: "#808080 #fff #fff #808080", padding: "1px 4px", textAlign: "right" }}>{"\u23F1"}{s.timer}s</div>
+          <div onClick={() => { s.muted = SFX.toggle(); forceUpdate(); }} style={{ border: "1px solid", borderColor: "#808080 #fff #fff #808080", padding: "1px 4px", cursor: "pointer", userSelect: "none" }}>{s.muted ? "\u{1F507}" : "\u{1F50A}"}</div>
+        </div>
+      </div>
+      {s.showConfirm && <Win98Dialog title="Batalla Naval" icon={"\u26A0\uFE0F"}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}><span style={{ fontSize: 32 }}>{"\u26A0\uFE0F"}</span><span style={{ fontSize: 12 }}>&iquest;Quer&eacute;s abandonar la partida?</span></div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 8 }}><W98Btn onClick={() => { startGame(s.mode); }} style={{ minWidth: 75 }}>S&iacute;</W98Btn><W98Btn onClick={() => set({ showConfirm: false })} style={{ minWidth: 75 }}>No</W98Btn></div>
+      </Win98Dialog>}
+    </div>
+  );
+}
+
+// Export for global access
+window.BattleshipGame = BattleshipGame;
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(React.createElement(window.BattleshipGame));
+    root.render(React.createElement(BattleshipGame));
   </script>
 </body>
 </html>
