@@ -53,7 +53,7 @@
 - **Efectos de sonido** retro generados con Web Audio API (explosiones, agua, sonar, fanfarria)
 - **Interfaz Windows 98** fiel: bordes biselados, contadores LED, cara estilo Buscaminas, menús desplegables
 - **Responsive** — Funciona en desktop y mobile con tabs adaptativos
-- **Sin dependencias** — Vanilla HTML/CSS/JS puro
+- **React 18** via CDN — Sin build step, funciona directo en GitHub Pages
 
 ---
 
@@ -88,9 +88,8 @@ Empezás con **1 Radar** gratis.
 
 ```
 win98_battleship/
-├── index.html   ← Punto de entrada
-├── style.css    ← Estilos Windows 98
-├── game.js      ← Lógica del juego, IA, sonido, renderizado
+├── index.html   ← Punto de entrada (carga React + Babel por CDN)
+├── App.jsx      ← Componente React principal (juego completo)
 └── README.md
 ```
 
@@ -98,7 +97,7 @@ win98_battleship/
 
 ## Desarrollo local
 
-No se requiere build ni dependencias. Simplemente servir los archivos estáticos:
+No se requiere `npm install` ni build. React se carga por CDN. Solo servir los archivos estáticos:
 
 ```bash
 # Con Python
